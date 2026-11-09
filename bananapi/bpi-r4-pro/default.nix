@@ -86,15 +86,17 @@ in
     hardware.deviceTree = {
       enable = lib.mkDefault true;
       name = lib.mkDefault "mediatek/mt7988a-bananapi-bpi-r4-pro-4e-sd.dtb";
-      dtbSource = lib.mkDefault (pkgs.runCommand "bpi-r4-pro-dtbs"
-        {
-          nativeBuildInputs = [ pkgs.dtc ];
-        }
-        ''
-          mkdir -p $out/mediatek
-          dtc -I dts -O dtb -o "$out/mediatek/mt7988a-bananapi-bpi-r4-pro-4e-sd.dtb" \
-            ${./dtb/mt7988a-bananapi-bpi-r4-pro-4e-sd.dts}
-        '');
+      dtbSource = lib.mkDefault (
+        pkgs.runCommand "bpi-r4-pro-dtbs"
+          {
+            nativeBuildInputs = [ pkgs.dtc ];
+          }
+          ''
+            mkdir -p $out/mediatek
+            dtc -I dts -O dtb -o "$out/mediatek/mt7988a-bananapi-bpi-r4-pro-4e-sd.dtb" \
+              ${./dtb/mt7988a-bananapi-bpi-r4-pro-4e-sd.dts}
+          ''
+      );
     };
 
     # --- kernel build guard ---------------------------------------------

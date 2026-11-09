@@ -37,19 +37,21 @@ let
   cfg = config.hardware.bananapi.bpi-r4-pro;
 
   envText = pkgs.writeText "bpi-r4-pro-uboot-env.txt" ''
-    bootargs=${lib.concatStringsSep " " (
-      [
-        "console=ttyS0,115200n1"
-        "pci=pcie_bus_perf"
-        "clk_ignore_unused"
-        "pd_ignore_unused"
-        "root=fstab"
-        "rootwait"
-        "rw"
-        "init=/nix/var/nix/profiles/system/init"
-      ]
-      ++ cfg.extraKernelParams
-    )}
+    bootargs=${
+      lib.concatStringsSep " " (
+        [
+          "console=ttyS0,115200n1"
+          "pci=pcie_bus_perf"
+          "clk_ignore_unused"
+          "pd_ignore_unused"
+          "root=fstab"
+          "rootwait"
+          "rw"
+          "init=/nix/var/nix/profiles/system/init"
+        ]
+        ++ cfg.extraKernelParams
+      )
+    }
     bootdelay=2
 
     # --- SD boot path (verbatim from the vendor env) ---------------------------
@@ -88,12 +90,13 @@ in
   config = lib.mkIf cfg.enable {
     # Redundant env: two 0x40000 copies (matches what the vendor U-Boot expects
     # and what the `ubootenv` partition is sized for).  `-r` marks it redundant.
-    system.build.bpiR4ProUbootEnv = pkgs.runCommand "bpi-r4-pro-uboot-env.bin"
-      {
-        nativeBuildInputs = [ pkgs.ubootTools ];
-      }
-      ''
-        mkenvimage -s 0x40000 -r -o "$out" ${envText}
-      '';
+    system.build.bpiR4ProUbootEnv =
+      pkgs.runCommand "bpi-r4-pro-uboot-env.bin"
+        {
+          nativeBuildInputs = [ pkgs.ubootTools ];
+        }
+        ''
+          mkenvimage -s 0x40000 -r -o "$out" ${envText}
+        '';
   };
 }

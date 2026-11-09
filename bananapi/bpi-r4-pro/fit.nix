@@ -198,16 +198,17 @@ in
   config = lib.mkIf cfg.enable {
     # Expose the FIT as a build artifact.  mkimage shells out to dtc to compile
     # the .its, so both ubootTools and dtc must be on PATH.
-    system.build.bpiR4ProFit = pkgs.runCommand "nixos-bpi-r4-pro-4e.itb"
-      {
-        nativeBuildInputs = [
-          pkgs.ubootTools
-          pkgs.dtc
-        ];
-      }
-      ''
-        mkimage -f ${itsFile} "$out"
-      '';
+    system.build.bpiR4ProFit =
+      pkgs.runCommand "nixos-bpi-r4-pro-4e.itb"
+        {
+          nativeBuildInputs = [
+            pkgs.ubootTools
+            pkgs.dtc
+          ];
+        }
+        ''
+          mkimage -f ${itsFile} "$out"
+        '';
 
     # Keep the FIT in the system closure so fit-sync can reflash it, and make it
     # a build dependency so a broken FIT fails the build.
