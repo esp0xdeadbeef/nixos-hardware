@@ -27,8 +27,6 @@
 # flash a stock OpenWrt SD image first, then write this image's `production`
 # partition and `ubootenv` partition over it.
 let
-  cfg = config.hardware.bananapi.bpi-r4-pro;
-
   # Sector geometry, identical to the vendor GPT.
   #   name        start(sec)  size(sec)
   bl2Start = 34;
