@@ -36,9 +36,21 @@
 # ./sd-image.nix (or the fit-sync unit for upgrades).
 let
   cfg = config.hardware.bananapi.bpi-r4-pro;
+
+  # The boot chain (BL2/BL31/U-Boot) is AArch64 firmware.  Build it with the
+  # cross set so an x86_64 evaluation host produces aarch64 blobs, and so an
+  # aarch64 host builds them natively.
+  pkgsCross =
+    if pkgs.stdenv.hostPlatform.isAarch64 then
+      pkgs
+    else
+      pkgs.pkgsCross.aarch64-multiplatform;
 in
 {
-  imports = [ ./linux.nix ];
+  imports = [
+    ./linux.nix
+    ./fip.nix
+  ];
 
   options.hardware.bananapi.bpi-r4-pro = {
     enable = lib.mkEnableOption "Banana Pi BPI-R4 Pro (MT7988A) board support";
@@ -61,6 +73,39 @@ in
         nixpkgs/kernel bump cannot silently drop them.  Without them the board
         boots with no netdev at all, and the only way back in is the serial
         console.
+      '';
+    };
+
+    buildFirmware = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Build the board's own BL2 and FIP (BL31 + U-Boot) instead of relying on
+        the signed vendor OpenWrt firmware.  Enables an EFI boot chain: U-Boot
+        with `CONFIG_EFI_LOADER`, then stock systemd-boot on an ESP.
+
+        The vendor firmware could only `bootm` a raw FIT, which forced an
+        absolute `init=` into the image and made switching NixOS generations
+        impossible -- a rebuilt profile was ignored until the FIT was reflashed.
+      '';
+    };
+
+    atfPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgsCross.callPackage ./atf.nix { };
+      defaultText = lib.literalMD "the board's pinned MT7988 ATF derivation";
+      description = ''
+        The ARM Trusted Firmware build (BL2 preloader + BL31 monitor).
+      '';
+    };
+
+    ubootPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgsCross.callPackage ./uboot.nix { };
+      defaultText = lib.literalMD "the board's pinned U-Boot derivation";
+      description = ''
+        The U-Boot (BL33) build.  Must be built for aarch64 with
+        `CONFIG_EFI_LOADER` enabled, see ./uboot.nix.
       '';
     };
   };

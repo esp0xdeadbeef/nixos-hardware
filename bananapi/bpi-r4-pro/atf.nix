@@ -40,17 +40,24 @@ let
   # OpenWrt uses for `mt7988_bananapi_bpi-r4-sdmmc`
   # (trusted-firmware-a-mt7988-sdmmc-comb).
   bootDevice = "sdmmc";
-in
-stdenv.mkDerivation (finalAttrs: {
-  pname = "arm-trusted-firmware-mt7988";
-  version = "2024-01-17";
 
-  src = fetchFromGitHub {
+  # The single source of truth for the ATF tree.  ./fip.nix reuses this exact
+  # source to build `fiptool`, so the FIP container format can never drift from
+  # the BL2 that parses it.
+  atfSource = fetchFromGitHub {
     owner = "mtk-openwrt";
     repo = "arm-trusted-firmware";
     rev = "bacca82a8cac369470df052a9d801a0ceb9b74ca";
     hash = "sha256-n5D3styntdoKpVH+vpAfDkCciRJjCZf9ivrI9eEdyqw=";
   };
+in
+stdenv.mkDerivation (finalAttrs: {
+  pname = "arm-trusted-firmware-mt7988";
+  version = "2024-01-17";
+
+  src = atfSource;
+
+  passthru = { inherit atfSource; };
 
   nativeBuildInputs = [
     ubootTools # mkimage -T mtk_image (the BL2 boot-ROM header)
