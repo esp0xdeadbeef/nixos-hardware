@@ -27,16 +27,19 @@
 let
   cfg = config.hardware.bananapi.bpi-r4-pro;
 
-  # `fiptool` from the same source as BL2/BL31.  This is a HOST tool: it runs on
-  # the build machine and never on the board.
-  fiptool = pkgs.stdenv.mkDerivation {
+  # `fiptool` is a HOST tool -- it runs on the build machine to assemble the
+  # FIP and never on the board.  It must therefore be built with the NATIVE
+  # stdenv, not the target/cross one: under the aarch64 package set the build
+  # died in `make` (no native compiler, and the tool would be unusable on an
+  # x86_64 builder anyway).
+  fiptool = pkgs.buildPackages.stdenv.mkDerivation {
     pname = "fiptool-mt7988";
-    version = cfg.atfPackage.version;
+    inherit (cfg.atfPackage) version;
 
     src = cfg.atfPackage.atfSource;
 
-    nativeBuildInputs = [ pkgs.openssl ];
-    buildInputs = [ pkgs.openssl ];
+    nativeBuildInputs = [ pkgs.buildPackages.openssl ];
+    buildInputs = [ pkgs.buildPackages.openssl ];
 
     buildPhase = ''
       runHook preBuild
