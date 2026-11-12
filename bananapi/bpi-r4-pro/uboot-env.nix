@@ -5,38 +5,52 @@
   ...
 }:
 
-# Write a real U-Boot environment into the board's `ubootenv` partition.
+# Write the U-Boot environment into the board's `ubootenv` partition.
 #
-# U-Boot's image_setup_libfdt() ALWAYS overwrites /chosen/bootargs with
-# env_get("bootargs") -- the FIT's own bootargs are ignored.  The vendor
-# built-in default is
+# WHY THIS IS NOW TINY
+# --------------------
+# While the board booted a raw FIT, this file had to reproduce the whole vendor
+# OpenWrt SD boot path (`sdmmc_read_production`, `bootconf*`, `bootm
+# $loadaddr#...`) AND carry the kernel command line, because U-Boot's
+# image_setup_libfdt() overwrites /chosen/bootargs from `env_get("bootargs")`.
+# That made the environment the only place `init=` could live, and it had to
+# point at a generation.
 #
-#   bootargs=console=ttyS0,115200n1 pci=pcie_bus_perf root=/dev/fit0 rootwait
+# With U-Boot booting the ESP, the kernel command line belongs to each
+# systemd-boot entry -- `nixos-rebuild boot` writes it, per generation.  So the
+# environment only has to do one thing: find the ESP and boot it.  U-Boot's
+# `bootstd` scanner already does that (`bootflow scan -lb`, set in
+# ./uboot.nix's CONFIG_BOOTCOMMAND), so this only has to exist so that a broken
+# environment cannot send the board somewhere useless.
 #
-# and `root=/dev/fit0` is OpenWrt's device, which does not exist for NixOS.
-# Stage-1 then has no usable root= and no init=, and the boot dies right after
-# "Run /init as init process".  So we write an env whose bootargs point at the
-# NixOS root and the toplevel init.  Writing an env REPLACES the built-in one, so
-# every variable the SD boot path needs is reproduced verbatim from the vendor
-# FIP (only `bootargs` differs).
-#
-# `init=` is MANDATORY: the systemd initrd discovers the system closure ONLY
-# from this parameter.  It points at the STABLE profile symlink, not a pinned
-# /nix/store path, so a rebuild that moves /nix/var/nix/profiles/system is
-# picked up on the next boot without rewriting this env.
-#
-# `root=fstab` (NOT root=PARTLABEL=...): with the systemd initrd,
-# fileSystems."/" already carries `x-initrd.mount`, so systemd-fstab-generator
-# creates sysroot.mount from that entry.  Passing a root= *device* as well makes
-# it try to create sysroot.mount a second time, which makes it bail out of
-# generating the rest -- so every fsNeededForBoot mount (e.g. /persist) fails to
-# mount, and anything reading a key from there during initrd (sops-nix) breaks.
-# `root=fstab` resolves the root from the fstab entry instead and leaves a single
-# sysroot.mount.
+# bootargs is still written, deliberately: if bootstd ever falls back to a
+# manual `booti`/`bootm`, these are the parameters that make the kernel find the
+# root and the console.  They are NOT authoritative for a normal boot.
 let
   cfg = config.hardware.bananapi.bpi-r4-pro;
 
   envText = pkgs.writeText "bpi-r4-pro-uboot-env.txt" ''
+    # Boot the ESP: U-Boot scans block devices for /EFI/BOOT/BOOTAA64.EFI,
+    # then systemd-boot shows the generation menu on the serial console.
+    bootcmd=bootflow scan -lb
+
+    bootdelay=2
+    bootmenu_default=0
+    bootmenu_delay=2
+    bootmenu_title=BPI-R4 Pro NixOS
+    bootmenu_0=Boot NixOS from the ESP.=run bootcmd
+    bootmenu_1=U-Boot console.=exit
+
+    # Fallback parameters for a manual boot from the U-Boot console.  A normal
+    # boot gets its command line from the systemd-boot entry instead.
+    #
+    # init= is mandatory for NixOS's systemd initrd (initrd-find-nixos-closure
+    # resolves it inside /sysroot).  The stable profile symlink is used so it
+    # cannot go stale after an on-board rebuild.
+    # `root=fstab` (NOT root=PARTLABEL=...): fileSystems."/" already carries
+    # x-initrd.mount, so a root= device as well would make
+    # systemd-fstab-generator try to create sysroot.mount twice and bail out,
+    # leaving /persist (and the sops age key) unmounted in the initrd.
     bootargs=${
       lib.concatStringsSep " " (
         [
@@ -52,48 +66,23 @@ let
         ++ cfg.extraKernelParams
       )
     }
-    bootdelay=2
 
-    # --- SD boot path (verbatim from the vendor env) ---------------------------
-    loadaddr=0x50000000
-    part_default=production
-    part_recovery=recovery
-    bootconf=config-mt7988a-bananapi-bpi-r4-pro-4e
-    bootconf_sd=mt7988a-bananapi-bpi-r4-pro-4e-sd
-    bootconf_emmc=mt7988a-bananapi-bpi-r4-pro-4e-emmc
-    bootconf_extra=mt7988a-bananapi-bpi-r4-pro-4e-iphy
-    mmc_read_vol=mmc read $loadaddr $part_addr 0x100 && imszb $loadaddr image_size && test 0x$image_size -le 0x$part_size && mmc read $loadaddr 0x$part_addr 0x$image_size && setexpr filesize $image_size * 0x200
-    sdmmc_read_production=part start mmc 0 $part_default part_addr && part size mmc 0 $part_default part_size && run mmc_read_vol
-    sdmmc_read_recovery=part start mmc 0 $part_recovery part_addr && part size mmc 0 $part_recovery part_size && run mmc_read_vol
-    boot_production=led $bootled_pwr on ; run sdmmc_read_production && bootm $loadaddr#$bootconf#$bootconf_sd#$bootconf_extra ; led $bootled_pwr off
-    boot_recovery=led $bootled_rec on ; run sdmmc_read_recovery && bootm $loadaddr#$bootconf#$bootconf_emmc#$bootconf_extra ; led $bootled_rec off
-    boot_sdmmc=run boot_production ; run boot_recovery
-    # pstore/ramoops survives warm reboots; a stale panic would otherwise send us
-    # to `boot_recovery` (which needs a `recovery` partition we do not ship).
-    bootcmd=run boot_sdmmc
-
-    # --- LEDs / menu (kept so the menu still works) ----------------------------
-    bootled_pwr=green:status
-    bootled_rec=blue:status
-    bootmenu_default=0
-    bootmenu_delay=0
-    bootmenu_title=      ( ( ( OpenWrt ) ) )  [SD card]
-    bootmenu_confirm_return=askenv - Press ENTER to return to menu ; bootmenu 60
-    bootmenu_0=Run default boot command.=run bootcmd ; run bootmenu_confirm_return
-    bootmenu_1=Boot production system from SD card.=run boot_production ; run bootmenu_confirm_return
-    bootmenu_2=Reboot.=reset
-    boot_first=bootmenu
-    boot_default=run bootcmd
+    # Serial console must survive a bad env: these make `booti` usable by hand.
+    kernel_addr_r=0x46000000
+    fdt_addr_r=0x45f00000
+    ramdisk_addr_r=0x4a000000
   '';
 in
 {
   config = lib.mkIf cfg.enable {
-    # Redundant env: two 0x40000 copies (matches what the vendor U-Boot expects
-    # and what the `ubootenv` partition is sized for).  `-r` marks it redundant.
+    # Redundant env: two 0x40000 copies, matching what U-Boot expects and what
+    # the `ubootenv` partition is sized for.
     system.build.bpiR4ProUbootEnv =
       pkgs.runCommand "bpi-r4-pro-uboot-env.bin"
         {
-          nativeBuildInputs = [ pkgs.ubootTools ];
+          nativeBuildInputs = [
+            (if pkgs.stdenv.buildPlatform.isAarch64 then pkgs.ubootTools else pkgs.pkgsBuildBuild.ubootTools)
+          ];
         }
         ''
           mkenvimage -s 0x40000 -r -o "$out" ${envText}

@@ -51,7 +51,7 @@ let
     hash = "sha256-n5D3styntdoKpVH+vpAfDkCciRJjCZf9ivrI9eEdyqw=";
   };
 in
-stdenv.mkDerivation (finalAttrs: {
+stdenv.mkDerivation (_finalAttrs: {
   pname = "arm-trusted-firmware-mt7988";
   version = "2024-01-17";
 
@@ -98,6 +98,9 @@ stdenv.mkDerivation (finalAttrs: {
     homepage = "https://github.com/mtk-openwrt/arm-trusted-firmware";
     license = licenses.bsd3;
     maintainers = [ ];
-    platforms = [ "aarch64-linux" "x86_64-linux" ];
+    platforms = [
+      "aarch64-linux"
+      "x86_64-linux"
+    ];
   };
 })

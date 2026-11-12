@@ -41,15 +41,13 @@ let
   # cross set so an x86_64 evaluation host produces aarch64 blobs, and so an
   # aarch64 host builds them natively.
   pkgsCross =
-    if pkgs.stdenv.hostPlatform.isAarch64 then
-      pkgs
-    else
-      pkgs.pkgsCross.aarch64-multiplatform;
+    if pkgs.stdenv.hostPlatform.isAarch64 then pkgs else pkgs.pkgsCross.aarch64-multiplatform;
 in
 {
   imports = [
     ./linux.nix
     ./fip.nix
+    ./efi.nix
   ];
 
   options.hardware.bananapi.bpi-r4-pro = {
@@ -229,12 +227,14 @@ in
     ];
 
     # --- bootloader -----------------------------------------------------
-    # NixOS does not own the bootloader: the vendor U-Boot loads the raw FIT
-    # from the `production` partition (see ./fit.nix).  Disable every NixOS
-    # bootloader so nothing writes an ESP we do not use.
-    boot.loader.grub.enable = lib.mkForce false;
-    boot.loader.generic-extlinux-compatible.enable = lib.mkForce false;
-    boot.loader.systemd-boot.enable = lib.mkForce false;
+    # NixOS OWNS the bootloader on this board: ./efi.nix installs systemd-boot
+    # on an ESP and U-Boot (built with CONFIG_EFI_LOADER in ./uboot.nix) boots
+    # it.  The vendor OpenWrt firmware could only `bootm` a raw FIT and is no
+    # longer used -- see ./fip.nix.
+    #
+    # The old code force-disabled every loader here because the vendor U-Boot
+    # had no EFI path.  That assumption is what this change removes, so the
+    # disable block is gone; ./efi.nix sets the loaders explicitly.
     boot.loader.efi.canTouchEfiVariables = lib.mkForce false; # no EFI vars on this board
   };
 }

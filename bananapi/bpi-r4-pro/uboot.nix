@@ -124,7 +124,9 @@ let
         else
           "--set-val";
     in
-    "bash scripts/config --file .config ${verb} ${name}${lib.optionalString (verb == "--set-val") " ${value}"}"
+    "bash scripts/config --file .config ${verb} ${name}${
+      lib.optionalString (verb == "--set-val") " ${value}"
+    }"
   ) efibootConfig;
 
   # Host tools (fixdep, binman, mkimage) are compiled by U-Boot's Makefile and
