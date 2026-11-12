@@ -85,6 +85,32 @@ Modern laptop and phone speakers use dynamic power to ensure the coils are not o
 Bluetooth MAC is automatically generated.
 The MAC address is based on the system's machine-id.
 
+A fixed address can be set instead. It must be upper case:
+```nix
+hardware.lenovo.x13s.bluetoothMAC = "E4:25:18:22:44:AA";
+```
+
+Setting the MAC requires the controller to have registered with the kernel
+management layer (`hci_register_dev`). On this board the serdev attach can race
+the start of `bluetooth-x13s-mac.service`, leaving `hci0` present in sysfs but
+absent from `btmgmt info` (`Index list with 0 items`). The unit therefore waits
+for a management index to actually appear, and if none does within
+`hardware.lenovo.x13s.bluetoothMACWaitSeconds` (default `20`) it rebinds the
+`hci_uart_qca` serdev driver and waits once more before failing. Rebinding is a
+no-op on a boot where the controller registered normally.
+
+The unit is idempotent: `btmgmt public-addr` is a one-shot per power cycle and
+returns `Rejected` (0x0b) once an address is set, so the command is skipped when
+the running address already matches.
+
+To inspect the current state:
+```shellSession
+$ btmgmt info
+Index list with 1 item
+hci0:    Primary controller
+    addr 52:BA:AF:85:F0:AD version 12 manufacturer 29 class 0x6c010c
+```
+
 ## Camera
 The MIPI camera does work, however, it's not accelerated by the ISP and therefore image processing is done on CPU.
 There appears to be an active issue with the camera's powerup sequence.

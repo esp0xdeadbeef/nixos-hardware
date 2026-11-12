@@ -46,6 +46,17 @@ in
       default = null;
     };
 
+    bluetoothMACWaitSeconds = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 20;
+      description = ''
+        How long to wait for the Bluetooth adapter to register with the
+        kernel mgmt layer before setting the MAC address. The X13s serdev
+        attach can race the unit start, so the wait is retried once after a
+        `hci_uart_qca` rebind; this is the budget for each of the two waits.
+      '';
+    };
+
     bluetoothMAC = lib.mkOption {
       type = lib.types.nullOr (lib.types.strMatching "([0-9A-F]{2}(:[0-9A-F]{2}){5})");
       description = ''
@@ -94,6 +105,8 @@ in
         restartIfChanged = false;
 
         script = ''
+          BT_MGMT=${config.hardware.bluetooth.package}/bin/btmgmt
+
           BLUETOOTH_MAC="${lib.optionalString (cfg.bluetoothMAC != null) cfg.bluetoothMAC}"
 
           if [ "$BLUETOOTH_MAC" = "" ] ; then
@@ -103,24 +116,98 @@ in
 
           echo "Waiting for Adapter"
 
-          # Listen to the hardware setup and wait for the adapter to
-          # finish receiving its firmware, and finish loading
-          mkfifo /tmp/btmon.log
-          stdbuf -oL ${config.hardware.bluetooth.package}/bin/btmon --mgmt --kernel >> /tmp/btmon.log &
-          BTPID=$!
-          grep -q -m 1 "Unconfigured Index Ad" /tmp/btmon.log || true
-          kill $BTPID 2>/dev/null
+          # Wait for the controller to be *registered with the mgmt layer*.
+          #
+          # Do not grep btmon output for a progress message: on the X13s the
+          # serdev attach (hci_uart_qca -> hci_register_dev) can complete
+          # before or after this unit starts, and btmon only replays its ring
+          # buffer, so the text it prints depends purely on how late we look.
+          # The old `grep -q -m 1 "Unconfigured Index Ad" || true` therefore
+          # blocked until TimeoutSec whenever the adapter was already up, and
+          # the `|| true` turned a missing match into a hang instead of an
+          # error.
+          #
+          # The one thing that actually matters is whether `btmgmt` can see
+          # index 0. Poll for that with a bounded deadline.
+          deadline=$((SECONDS + ${toString cfg.bluetoothMACWaitSeconds}))
+          until $BT_MGMT info 2>/dev/null | grep -q '^Index list with [1-9]'; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              # The controller did not register. On this board that is the
+              # known serdev probe race: the QCA firmware is up but
+              # hci_register_dev never ran, so no mgmt index exists and the
+              # MAC cannot be set. Rebinding the serdev driver re-runs the
+              # attach and is harmless when it was not needed.
+              echo "No mgmt index after $SECONDS s; rebinding hci_uart_qca" >&2
+              driver=/sys/bus/serial/drivers/hci_uart_qca
+              if [ -w "$driver/bind" ]; then
+                # Find the serdev node itself rather than walking from
+                # /sys/class/bluetooth/hci0: once the device failed to
+                # register, that symlink is dangling and names nothing.
+                # Only unbind a node that is currently bound -- writing an
+                # unbound name to `unbind` returns ENODEV.
+                serdev=$(ls /sys/bus/serial/devices 2>/dev/null \
+                  | grep -m1 -x 'serial[0-9]*-[0-9]*')
+                if [ -n "$serdev" ]; then
+                  echo "rebinding $serdev" >&2
+                  if [ -e "$driver/$serdev" ]; then
+                    echo "$serdev" > "$driver/unbind" 2>/dev/null || true
+                  fi
+                  sleep 1
+                  echo "$serdev" > "$driver/bind" 2>/dev/null || true
+                fi
+              fi
+              deadline=$((SECONDS + ${toString cfg.bluetoothMACWaitSeconds}))
+              until $BT_MGMT info 2>/dev/null | grep -q '^Index list with [1-9]'; do
+                if [ "$SECONDS" -ge "$deadline" ]; then
+                  echo "Bluetooth adapter never registered; cannot set MAC." >&2
+                  exit 1
+                fi
+                sleep 1
+              done
+              break
+            fi
+            sleep 1
+          done
+
+          # `public-addr` is a one-shot per power cycle: the controller rejects
+          # it once an address is already set (0x0b Rejected). Rebinding after
+          # a failed register therefore leaves the chip on the address we
+          # wanted anyway, so only issue the command when the running address
+          # differs. This keeps the unit idempotent instead of failing on the
+          # exact boot it was meant to fix.
+          current=$($BT_MGMT --index 0 info 2>/dev/null \
+            | sed -n 's/^[[:space:]]*addr \([0-9A-Fa-f:]*\).*/\1/p' \
+            | tr '[:lower:]' '[:upper:]')
+
+          if [ "$current" = "$BLUETOOTH_MAC" ]; then
+            echo "MAC already set to $BLUETOOTH_MAC; nothing to do"
+            exit 0
+          fi
 
           echo "Assigning MAC: $BLUETOOTH_MAC"
 
-          ${config.hardware.bluetooth.package}/bin/btmgmt --index 0 public-addr $BLUETOOTH_MAC
+          if ! $BT_MGMT --index 0 public-addr "$BLUETOOTH_MAC"; then
+            # A rejected set is only an error if the address is still wrong.
+            current=$($BT_MGMT --index 0 info 2>/dev/null \
+              | sed -n 's/^[[:space:]]*addr \([0-9A-Fa-f:]*\).*/\1/p' \
+              | tr '[:lower:]' '[:upper:]')
+            if [ "$current" = "$BLUETOOTH_MAC" ]; then
+              echo "MAC already set to $BLUETOOTH_MAC"
+              exit 0
+            fi
+            echo "Failed to set Bluetooth MAC (current=${current:-none})" >&2
+            exit 1
+          fi
+          exit 0
         '';
 
         serviceConfig = {
           Type = "oneshot";
           PrivateTmp = "true";
           RemainAfterExit = true;
-          TimeoutSec = "1m";
+          # The unit now owns its own bounded wait (and a rebind retry), so the
+          # systemd timeout only has to be larger than the script's deadline.
+          TimeoutSec = "${toString (cfg.bluetoothMACWaitSeconds * 3)}s";
         };
       };
     })
