@@ -58,7 +58,14 @@ in
     # BL2 is the SD preloader and goes to RAW SECTOR 34 of the card: it is not a
     # partition and not a file, so no NixOS partition layout can place it -- the
     # image writer dd's it at seek=34.
-    system.build.bpiR4ProBl2 = "${cfg.atfPackage}/bl2.img";
+    #
+    # This must be a real derivation (hence runCommand), not
+    # "${cfg.atfPackage}/bl2.img": interpolating a path onto a derivation
+    # produces a string whose output placeholder no longer matches the
+    # derivation, which Nix rejects at eval time.
+    system.build.bpiR4ProBl2 = pkgs.runCommandLocal "bpi-r4-pro-bl2.img" { } ''
+      cp ${cfg.atfPackage}/bl2.img $out
+    '';
 
     system.build.bpiR4ProFip =
       pkgs.runCommand "bpi-r4-pro-fip.bin"
