@@ -55,7 +55,7 @@ in
         # `linux_6_18.override { version = ...; }` alone does not.
         argsOverride = {
           version = patchBase;
-          modDirVersion = "${patchBase}.0";
+          modDirVersion = patchBase;
           src = pkgs.fetchurl {
             url = "mirror://kernel/linux/kernel/v6.x/linux-${patchBase}.tar.xz";
             hash = "sha256-9BBjgGGhZcEvQquHHS8/zVJVFTWbX67ugJac/4RSTfk=";
