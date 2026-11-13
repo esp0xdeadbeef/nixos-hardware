@@ -58,7 +58,7 @@ in
           modDirVersion = "${patchBase}.0";
           src = pkgs.fetchurl {
             url = "mirror://kernel/linux/kernel/v6.x/linux-${patchBase}.tar.xz";
-            hash = "sha256-9BBjgGGhZcEvQquHHS8/zVJVFTWbX67ugJac/4RSTfk=";
+            hash = "sha256-GJ0fQJzvjQ0jQhDgRZUXLfOS+MspfhS0R+2Vcg4v2UA=";
           };
         };
         kernelPatches = (prev.kernelPatches or [ ]) ++ [
