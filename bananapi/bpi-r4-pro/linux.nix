@@ -40,14 +40,29 @@ let
   # Moving to a newer 6.18.x means rebasing the patch set and bumping
   # patchBase together -- they are one unit.
   patchBase = "6.18.55";
+
+  # The package set whose artifacts are built FOR THE BOARD.  In a cross build
+  # (`pkgs` = build packages) that is pkgsCross; on a native aarch64 host it is
+  # `pkgs` itself, so an on-board rebuild gets the same package.
+  kernelPkgs = pkgs.pkgsCross.aarch64-multiplatform or pkgs;
   # NOTE: this must be merged into ONE override below.  A second
   # `baseKernel.override { ... }` REPLACES argsOverride wholesale and silently
   # loses the pin (that is exactly how the version stayed at 6.18.62).
 in
 {
+  # `pkgs` here is the MODULE's package set.  When the host is cross-built
+  # (nixpkgs.buildPlatform = x86_64-linux, hostPlatform = aarch64-linux), that
+  # is the BUILD package set, so `pkgs.linux_6_18` is an x86_64 kernel -- which
+  # is exactly how the SD image ended up with
+  # "Linux kernel x86 boot executable, bzImage" for the board and U-Boot
+  # rejecting it with "Machine type 0x8664 is not supported".
+  #
+  # Take the kernel from the TARGET package set instead.  `pkgsCross` is the
+  # cross set only when a cross build is configured; on a native aarch64 host
+  # (an on-board rebuild) it is `pkgs` itself, so this is the same package.
   boot.kernelPackages = lib.mkDefault (
-    pkgs.linuxPackagesFor (
-      pkgs.linux_6_18.override (prev: {
+    kernelPkgs.linuxPackagesFor (
+      kernelPkgs.linux_6_18.override (prev: {
         # Pin the base kernel: linux_6_18 is mainline.nix and tracks 6.18.x
         # from kernels-org.json, so it drifts to a new point release whenever
         # nixpkgs moves.  mainline.nix applies argsOverride AFTER the
@@ -56,7 +71,7 @@ in
         argsOverride = {
           version = patchBase;
           modDirVersion = patchBase;
-          src = pkgs.fetchurl {
+          src = kernelPkgs.fetchurl {
             url = "mirror://kernel/linux/kernel/v6.x/linux-${patchBase}.tar.xz";
             hash = "sha256-9BBjgGGhZcEvQquHHS8/zVJVFTWbX67ugJac/4RSTfk=";
           };
