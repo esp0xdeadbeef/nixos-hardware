@@ -21,8 +21,53 @@
 # ly4096x/BananaPi-R4-Pro-8X-OS tree).
 let
   baseKernel = pkgs.linux_6_18;
+
+  # BLOCKED: the patch set in ./patches targets linux 6.18.5, but
+  # `pkgs.linux_6_18` resolves to DIFFERENT versions per platform in this
+  # nixpkgs pin:
+  #
+  #   aarch64-linux (the board) -> 6.18.62
+  #   x86_64-linux              -> 6.18.5
+  #
+  # and the downstream patch does not apply to 6.18.62:
+  #
+  #   Hunk #6 FAILED at 142.   drivers/net/pcs/pcs-mtk-lynxi.c
+  #
+  # That surfaces far from the cause, as a failed btrfs-fs.img deep inside the
+  # SD-image closure.  A nixpkgs bump is therefore not safe for this board
+  # until the patch is rebased onto the aarch64 base.
+  #
+  # Not worked around here on purpose: patching `version`/`src` via
+  # `linux_6_18.override` is silently ignored (linux_6_18 derives them
+  # internally -- verified: the built src stayed linux-6.18.62.tar.xz), and
+  # `ignoreConfigErrors`/`kernelPatches.*.extraStructuredConfig` do not help a
+  # failed hunk.
+  patchBaseMismatch = baseKernel.version != "6.18.5";
 in
 {
+  # Fail early and clearly instead of letting the failed hunk surface as a
+  # broken btrfs-fs.img inside the SD-image closure.
+  assertions = [
+    {
+      assertion = !patchBaseMismatch;
+      message = ''
+        BLOCKED (bananapi/bpi-r4-pro): the OpenWrt MT7988 patch set is rebased
+        onto linux 6.18.5, but pkgs.linux_6_18 here is ${baseKernel.version}.
+
+          aarch64-linux (this board) -> ${baseKernel.version}
+          x86_64-linux               -> 6.18.5
+
+        Applying it fails with "Hunk #6 FAILED at 142" in
+        drivers/net/pcs/pcs-mtk-lynxi.c, which then appears as a failed
+        btrfs-fs.img deep inside the SD-image closure.
+
+        Fix: rebase bananapi/bpi-r4-pro/patches/openwrt-mt7988-net-*.patch onto
+        linux ${baseKernel.version} for aarch64.  Do NOT bump nixpkgs for this
+        host until that is done.
+      '';
+    }
+  ];
+
   boot.kernelPackages = lib.mkDefault (
     pkgs.linuxPackagesFor (
       baseKernel.override (prev: {
