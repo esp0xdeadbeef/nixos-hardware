@@ -20,57 +20,47 @@
 # patches/openwrt-mt7988-net-6.18.55.patch, GPL-2.0, via the
 # ly4096x/BananaPi-R4-Pro-8X-OS tree).
 let
-  baseKernel = pkgs.linux_6_18;
-
-  # BLOCKED: the patch set in ./patches targets linux 6.18.5, but
-  # `pkgs.linux_6_18` resolves to DIFFERENT versions per platform in this
-  # nixpkgs pin:
+  # The patch set in ./patches is rebased onto linux 6.18.5.
   #
-  #   aarch64-linux (the board) -> 6.18.62
-  #   x86_64-linux              -> 6.18.5
-  #
-  # and the downstream patch does not apply to 6.18.62:
+  # `pkgs.linux_6_18` is mainline.nix, a TRACKING kernel: its version comes from
+  # kernels-org.json (branch = "6.18"), so it moves to a new point release
+  # whenever nixpkgs is updated -- 6.18.62 at the time of writing.  The patch
+  # then fails with
   #
   #   Hunk #6 FAILED at 142.   drivers/net/pcs/pcs-mtk-lynxi.c
   #
-  # That surfaces far from the cause, as a failed btrfs-fs.img deep inside the
-  # SD-image closure.  A nixpkgs bump is therefore not safe for this board
-  # until the patch is rebased onto the aarch64 base.
+  # which surfaces far from the cause, as a failed btrfs-fs.img deep inside the
+  # SD-image closure.
   #
-  # Not worked around here on purpose: patching `version`/`src` via
-  # `linux_6_18.override` is silently ignored (linux_6_18 derives them
-  # internally -- verified: the built src stayed linux-6.18.62.tar.xz), and
-  # `ignoreConfigErrors`/`kernelPatches.*.extraStructuredConfig` do not help a
-  # failed hunk.
-  patchBaseMismatch = baseKernel.version != "6.18.5";
+  # Pin the base here.  mainline.nix applies `args.argsOverride` AFTER the
+  # json-derived version/src, which is why this works and
+  # `linux_6_18.override { version = ...; }` does not (verified: that produced
+  # src linux-6.18.62.tar.xz regardless).
+  #
+  # Moving to a newer 6.18.x means rebasing the patch set and bumping
+  # patchBase together -- they are one unit.
+  patchBase = "6.18.5";
+  # NOTE: this must be merged into ONE override below.  A second
+  # `baseKernel.override { ... }` REPLACES argsOverride wholesale and silently
+  # loses the pin (that is exactly how the version stayed at 6.18.62).
 in
 {
-  # Fail early and clearly instead of letting the failed hunk surface as a
-  # broken btrfs-fs.img inside the SD-image closure.
-  assertions = [
-    {
-      assertion = !patchBaseMismatch;
-      message = ''
-        BLOCKED (bananapi/bpi-r4-pro): the OpenWrt MT7988 patch set is rebased
-        onto linux 6.18.5, but pkgs.linux_6_18 here is ${baseKernel.version}.
-
-          aarch64-linux (this board) -> ${baseKernel.version}
-          x86_64-linux               -> 6.18.5
-
-        Applying it fails with "Hunk #6 FAILED at 142" in
-        drivers/net/pcs/pcs-mtk-lynxi.c, which then appears as a failed
-        btrfs-fs.img deep inside the SD-image closure.
-
-        Fix: rebase bananapi/bpi-r4-pro/patches/openwrt-mt7988-net-*.patch onto
-        linux ${baseKernel.version} for aarch64.  Do NOT bump nixpkgs for this
-        host until that is done.
-      '';
-    }
-  ];
-
   boot.kernelPackages = lib.mkDefault (
     pkgs.linuxPackagesFor (
-      baseKernel.override (prev: {
+      pkgs.linux_6_18.override (prev: {
+        # Pin the base kernel: linux_6_18 is mainline.nix and tracks 6.18.x
+        # from kernels-org.json, so it drifts to a new point release whenever
+        # nixpkgs moves.  mainline.nix applies argsOverride AFTER the
+        # json-derived version/src, which is why this works and
+        # `linux_6_18.override { version = ...; }` alone does not.
+        argsOverride = {
+          version = patchBase;
+          modDirVersion = "${patchBase}.0";
+          src = pkgs.fetchurl {
+            url = "mirror://kernel/linux/kernel/v6.x/linux-${patchBase}.tar.xz";
+            hash = "sha256-9BBjgGGhZcEvQquHHS8/zVJVFTWbX67ugJac/4RSTfk=";
+          };
+        };
         kernelPatches = (prev.kernelPatches or [ ]) ++ [
           {
             name = "openwrt-mt7988-net";
