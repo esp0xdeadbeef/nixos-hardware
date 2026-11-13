@@ -39,7 +39,7 @@ let
   #
   # Moving to a newer 6.18.x means rebasing the patch set and bumping
   # patchBase together -- they are one unit.
-  patchBase = "6.18.5";
+  patchBase = "6.18.55";
   # NOTE: this must be merged into ONE override below.  A second
   # `baseKernel.override { ... }` REPLACES argsOverride wholesale and silently
   # loses the pin (that is exactly how the version stayed at 6.18.62).
@@ -58,7 +58,7 @@ in
           modDirVersion = "${patchBase}.0";
           src = pkgs.fetchurl {
             url = "mirror://kernel/linux/kernel/v6.x/linux-${patchBase}.tar.xz";
-            hash = "sha256-GJ0fQJzvjQ0jQhDgRZUXLfOS+MspfhS0R+2Vcg4v2UA=";
+            hash = "sha256-9BBjgGGhZcEvQquHHS8/zVJVFTWbX67ugJac/4RSTfk=";
           };
         };
         kernelPatches = (prev.kernelPatches or [ ]) ++ [
