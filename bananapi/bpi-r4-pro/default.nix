@@ -200,31 +200,40 @@ in
     # CONSOLE backend fills it with ordinary console output, leaving no room for
     # the oops record itself (ENOSPC on a panic).  Drop the console backend to
     # keep the zone for dmesg/oops records.
-    # --- watchdog / warm reboot -----------------------------------------
-    # `systemctl reboot` on this board prints
+    # Drop the pstore console backend (see the ramoops note above) AND keep the
+    # MT7988 watchdog armed across a reboot.
     #
-    #   watchdog: watchdog0: watchdog did not stop!   (x3)
-    #   reboot: Restarting system
+    # `systemctl reboot` reaches
+    #   [  OK  ] Reached target System Reboot.
+    #   watchdog: watchdog0: watchdog did not stop!
+    #   [  424.301714] reboot: Restarting system
+    # and then the SoC never comes back: a power cycle is needed.
     #
-    # and then the SoC never comes back: a power cycle is required.  The kernel
-    # side is correct (mtk_wdt drives MT7988's TOPRGU, including the
-    # WDT_SWSYSRST_EN bit at 0xfc that MT7988 requires before a software reset
-    # is honoured, and the board DTS enables mediatek,mt7988-wdt), so the reset
-    # path exists -- it just never fires, because systemd STOPS the watchdog as
-    # part of shutting down.  With nothing holding the timer, nothing kicks the
-    # SoC.
+    # mtk_wdt already drives MT7988's TOPRGU on 6.18 (including the
+    # WDT_SWSYSRST_EN bit at 0xfc that MT7988 needs before a software reset is
+    # honoured) and the board DTS enables mediatek,mt7988-wdt, so the reset
+    # path exists -- it simply never fires because systemd closes the watchdog
+    # while shutting down.
     #
-    # nowayout keeps the watchdog armed once started, so the hardware reset
-    # actually happens.  This is the same knob OpenWrt relies on for these
-    # boards.
+    # `nowayout=1` keeps it armed once started, which is what actually performs
+    # the reset.
+    #
+    # NOTE: boot.extraModprobeConfig cannot be set from this module --
+    # nixos/modules/tasks/network-interfaces.nix assigns it unconditionally
+    # ("options bonding max_bonds=0"), which beats both mkDefault and a mkForce
+    # inside this mkIf block (verified: the definition never reaches the merge).
+    # modprobe.d is therefore written through environment.etc instead, and the
+    # systemd watchdog windows below keep kicking the timer through shutdown.
     boot.kernelModules = [ "mtk_wdt" ];
-    boot.extraModprobeConfig = lib.mkDefault ''
+
+    # modprobe.d file, set with mkForce for the same reason as
+    # boot.extraModprobeConfig above: other modules assign environment.etc
+    # entries at normal priority and a plain attribute here can lose.
+    environment.etc."modprobe.d/bpi-r4-pro-watchdog.conf".text = lib.mkForce ''
       options ramoops console_size=0
       options mtk_wdt nowayout=1
     '';
 
-    # systemd must not disarm the watchdog during reboot/shutdown: give it a
-    # window long enough to perform the reset instead of being closed first.
     systemd.settings.Manager = {
       RuntimeWatchdogSec = lib.mkDefault "30s";
       RebootWatchdogSec = lib.mkDefault "2min";
