@@ -6,6 +6,17 @@
   dtc,
   python3,
   xz,
+  # DRAM init is the one part of BL2 that cannot be copied from BL31: it runs
+  # before any memory exists.  MediaTek ships one config per DDR population, and
+  # `DRAM_USE_COMB=1` ("detect at runtime from the combined table") is what
+  # OpenWrt selects for trusted-firmware-a-mt7988-sdmmc-comb.
+  #
+  # Exposed as an argument because the bisect cannot otherwise separate this
+  # from a FIP/BL31 problem: with our BL2 the board reset-loops at "Jump to BL"
+  # and never prints a BL31 banner, while the VENDOR BL2 driving the same FIP
+  # boots fine.  To test an alternative:
+  #   pkgs.callPackage ./atf.nix { dramFlag = "DRAM_USE_DDR4=1"; }
+  dramFlag ? "DRAM_USE_COMB=1",
   ...
 }:
 
@@ -71,7 +82,7 @@ stdenv.mkDerivation (_finalAttrs: {
   makeFlags = [
     "PLAT=mt7988"
     "BOOT_DEVICE=${bootDevice}"
-    "DRAM_USE_COMB=1"
+    dramFlag
     "USE_MKIMAGE=1"
     "MKIMAGE=mkimage"
     "CROSS_COMPILE=${stdenv.cc.targetPrefix}"
