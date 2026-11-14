@@ -200,7 +200,36 @@ in
     # CONSOLE backend fills it with ordinary console output, leaving no room for
     # the oops record itself (ENOSPC on a panic).  Drop the console backend to
     # keep the zone for dmesg/oops records.
-    boot.extraModprobeConfig = lib.mkDefault "options ramoops console_size=0";
+    # --- watchdog / warm reboot -----------------------------------------
+    # `systemctl reboot` on this board prints
+    #
+    #   watchdog: watchdog0: watchdog did not stop!   (x3)
+    #   reboot: Restarting system
+    #
+    # and then the SoC never comes back: a power cycle is required.  The kernel
+    # side is correct (mtk_wdt drives MT7988's TOPRGU, including the
+    # WDT_SWSYSRST_EN bit at 0xfc that MT7988 requires before a software reset
+    # is honoured, and the board DTS enables mediatek,mt7988-wdt), so the reset
+    # path exists -- it just never fires, because systemd STOPS the watchdog as
+    # part of shutting down.  With nothing holding the timer, nothing kicks the
+    # SoC.
+    #
+    # nowayout keeps the watchdog armed once started, so the hardware reset
+    # actually happens.  This is the same knob OpenWrt relies on for these
+    # boards.
+    boot.kernelModules = [ "mtk_wdt" ];
+    boot.extraModprobeConfig = lib.mkDefault ''
+      options ramoops console_size=0
+      options mtk_wdt nowayout=1
+    '';
+
+    # systemd must not disarm the watchdog during reboot/shutdown: give it a
+    # window long enough to perform the reset instead of being closed first.
+    systemd.settings.Manager = {
+      RuntimeWatchdogSec = lib.mkDefault "30s";
+      RebootWatchdogSec = lib.mkDefault "2min";
+      KExecWatchdogSec = lib.mkDefault "2min";
+    };
 
     # The serial console must ALWAYS exist: it is the only way onto this board
     # when the network is down, which happens regularly.
@@ -217,13 +246,37 @@ in
     # --- initrd ---------------------------------------------------------
     # NVMe root needs the mtk-pcie-gen3 host controller (built-in in the board
     # kernel); the SD fallback needs mmc host + the card filesystems.
+    #
+    # `availableKernelModules` only means "the initrd ships it"; it does not
+    # make stage 1 WAIT for the device.  Measured on hardware: the NVMe only
+    # appeared at ~36 s, after systemd had already tried sysroot-nix.mount and
+    # given up --
+    #
+    #   Dependency failed for /sysroot/nix.
+    #   Dependency failed for Find NixOS closure.
+    #
+    # -- even though the same mount succeeded by hand seconds later.  The
+    # modules are therefore pinned into the initrd with `initrd.kernelModules`
+    # so they are loaded unconditionally and early, and the PCIe controller is
+    # brought up before the mount units are queued.
     boot.initrd.availableKernelModules = [
       "mmc_block"
       "sd_mod"
       "nvme"
       "nvme_core"
+      "pcie-mediatek-gen3"
+      "phy-mtk-pcie"
       "usb_storage"
       "uas"
+    ];
+
+    # Load order matters more than availability: without these the NVMe device
+    # node does not exist when systemd-fstab-generator's units start.
+    boot.initrd.kernelModules = [
+      "nvme"
+      "nvme_core"
+      "pcie-mediatek-gen3"
+      "phy-mtk-pcie"
     ];
 
     # --- bootloader -----------------------------------------------------
