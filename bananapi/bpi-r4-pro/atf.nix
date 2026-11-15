@@ -140,10 +140,26 @@ stdenv.mkDerivation (_finalAttrs: {
     "BOARD_BGA=1"
     "HAVE_DRAM_OBJ_FILE=yes"
     "CROSS_COMPILE=${stdenv.cc.targetPrefix}"
+    # Stamp the version string with the pinned source + variant instead of
+    # letting TF-A run `git describe` in the build tree.  Without this
+    # BUILD_STRING is empty and the banner reads "v2.10.0\t(release):" with
+    # nothing after it, so a serial-console capture cannot tell which preloader
+    # is on the card.
+    #
+    # Deliberately NOT __DATE__/__TIME__: the build must be byte-reproducible,
+    # so the timestamp stays at the Nix epoch (00:00:00, Jan  1 1980).
+    "BUILD_STRING=NixOS ${atfSource.rev} (${bootDevice}-comb)"
     "all"
   ];
 
   enableParallelBuilding = true;
+
+  # Pin the build clock so __DATE__/__TIME__ are reproducible.  Without it the
+  # values come from whenever the builder ran, which would make two builds of
+  # the same source differ and destroy the byte comparison against OpenWrt's
+  # preloader.  Nix leaves SOURCE_DATE_EPOCH unset, so set it explicitly to
+  # 1980-01-01T00:00:00Z (the value the previous builds happened to get).
+  SOURCE_DATE_EPOCH = "315532800";
 
   # TF-A's build writes into its own build/ dir and shells out to python for
   # the tool wrappers; hardening flags would break its freestanding AArch64
