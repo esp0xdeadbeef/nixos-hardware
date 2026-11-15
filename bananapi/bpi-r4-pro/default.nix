@@ -97,8 +97,7 @@ in
       # native compiler and silently returns the same store path as the GCC 15
       # build.  `gcc13Stdenv` rebuilds the cross stdenv itself, which is what
       # actually changes the aarch64 code generator (15.3.0 -> 13.4.0).
-      default =
-        pkgsCross.callPackage ./atf.nix { stdenv = pkgsCross.gcc13Stdenv; };
+      default = pkgsCross.callPackage ./atf.nix { stdenv = pkgsCross.gcc13Stdenv; };
       defaultText = lib.literalMD "the board's pinned MT7988 ATF derivation (GCC 13)";
       description = ''
         The ARM Trusted Firmware build (BL2 preloader + BL31 monitor).
@@ -197,6 +196,20 @@ in
       "console=ttyS0,115200n1"
       "clk_ignore_unused"
       "pd_ignore_unused"
+
+      # Do NOT use the EFI runtime services for restart/poweroff.
+      #
+      # Booting through systemd-boot means the kernel is entered as an EFI
+      # application, so it installs an EFI reset handler: machine_restart()
+      # calls ResetSystem() through U-Boot's runtime services instead of the
+      # PSCI call that used to reach BL31 directly.  That chain is what hangs
+      # on this board -- `systemctl reboot` and `poweroff` both stop dead,
+      # while the same FIP powered off fine under the old FIT path, where the
+      # kernel came straight from `bootm` and never saw EFI runtime.
+      #
+      # efi=no_runtime drops the EFI runtime mapping, so restart and poweroff
+      # go back to PSCI -> BL31, which is the path that works.
+      "efi=no_runtime"
     ];
 
     # `kernel.dmesg_restrict = 1` means an ordinary operator account gets ZERO
