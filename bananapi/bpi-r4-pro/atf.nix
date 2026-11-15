@@ -79,12 +79,33 @@ stdenv.mkDerivation (_finalAttrs: {
 
   # OpenWrt passes CROSS_COMPILE and builds AArch64 from a 64-bit host directly.
   # Do the same here so the output is byte-comparable with theirs.
+  #
+  # These flags mirror TFA_MAKE_FLAGS in OpenWrt's
+  # package/boot/arm-trusted-firmware-mediatek/Makefile for the
+  # `mt7988-sdmmc-comb` variant -- the exact variant this board uses:
+  #
+  #   BOOT_DEVICE=$(BOOT_DEVICE)                       -> sdmmc
+  #   USE_MKIMAGE=1 MKIMAGE=$(STAGING_DIR_HOST)/bin/mkimage
+  #   $(if $(findstring ddr4,$(DDR_TYPE)),DRAM_USE_DDR4=1)
+  #   $(if $(BOARD_QFN),BOARD_QFN=1,BOARD_BGA=1)       -> BOARD_BGA=1
+  #   HAVE_DRAM_OBJ_FILE=yes
+  #   $(if $(DRAM_USE_COMB),DRAM_USE_COMB=1)           -> set for *-comb
+  #
+  # BOARD_BGA and HAVE_DRAM_OBJ_FILE are passed UNCONDITIONALLY by OpenWrt;
+  # they are not optional extras.  Omitting them changes which DRAM object gets
+  # linked into BL2, which is the code path that runs between the BootROM and
+  # BL31 -- and BL2 is what hands off to the BL31 that services PSCI
+  # SYSTEM_RESET/SYSTEM_OFF.  Both a warm reboot and `shutdown now` hang on this
+  # board, and both are PSCI SMCs into BL31, so the preloader is the first place
+  # to make byte-comparable with a build that is known to work.
   makeFlags = [
     "PLAT=mt7988"
     "BOOT_DEVICE=${bootDevice}"
     dramFlag
     "USE_MKIMAGE=1"
     "MKIMAGE=mkimage"
+    "BOARD_BGA=1"
+    "HAVE_DRAM_OBJ_FILE=yes"
     "CROSS_COMPILE=${stdenv.cc.targetPrefix}"
     "all"
   ];
