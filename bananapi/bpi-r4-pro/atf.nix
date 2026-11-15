@@ -78,6 +78,22 @@ stdenv.mkDerivation (_finalAttrs: {
   # The Linux driver already does the right thing for the same SoC
   # (mt7988_data.has_swsysrst_en = true in drivers/watchdog/mtk_wdt.c).
   # This patch makes BL31 match it.
+  #
+  # VERIFIED in the built bl31.bin with Ghidra (module entry 0x4068, which is
+  # mtk_wdt_soft_reset -- it is the only function referencing WDT_MODE_KEY
+  # 0x22000000):
+  #
+  #   old: 0x4068..0x40ca, no access to offset 0xf4
+  #   new: 0x4068..0x40d6
+  #          000040b8  mov w1,#0x1
+  #          000040bc  str w1,[x0,#0xf4]    x0=0x1001c008 -> 0x1001c0fc (SW_SYSRST_EN)
+  #          000040c4  ldr w1,[x0,#0xc]                         -> 0x1001c014 (SWRST)
+  #          000040cc  str w1,[x0,#0xc]
+  #          000040d0  str wzr,[x0,#0xf4]   cleanup, only reached if it did not fire
+  #
+  # Note when reading this in a decompiler: Ghidra folds the pair into
+  # "_DAT_1001c0fc = 0" and hides the =1 write, which looks like the patch did
+  # nothing. The disassembly above is the ground truth.
   patches = [ ./patches/0001-mtk-wdt-set-SWSYSRST_EN-before-SWRST.patch ];
 
   passthru = { inherit atfSource; };
