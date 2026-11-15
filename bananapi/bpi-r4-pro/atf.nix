@@ -148,7 +148,7 @@ stdenv.mkDerivation (_finalAttrs: {
     #
     # Deliberately NOT __DATE__/__TIME__: the build must be byte-reproducible,
     # so the timestamp stays at the Nix epoch (00:00:00, Jan  1 1980).
-    "BUILD_STRING=NixOS ${atfSource.rev} (${bootDevice}-comb)"
+    "BUILD_STRING=NixOS-${atfSource.rev}-${bootDevice}-comb"
     "all"
   ];
 
