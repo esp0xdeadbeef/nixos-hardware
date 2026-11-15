@@ -1,6 +1,8 @@
 {
   lib,
   stdenv,
+  overrideCC,
+  gcc13,
   fetchFromGitHub,
   ubootTools,
   dtc,
@@ -62,6 +64,14 @@ let
     hash = "sha256-n5D3styntdoKpVH+vpAfDkCciRJjCZf9ivrI9eEdyqw=";
   };
 in
+# OpenWrt 24.10 builds this exact package with GCC 13.3.0 / binutils 2.42
+# (toolchain/gcc/Config.version, toolchain/binutils/Config.version).  The nix
+# stdenv here is GCC 15, which produces a *different binary from the same
+# source*: comparing our bl2.img against OpenWrt's shows identical wrappers
+# and identical code up to 0x968, then ~5400 instructions unique on each side.
+# A preloader that never prints its banner is exactly what a codegen change in
+# BL2's early init looks like, so build with the same major the working image
+# used.
 stdenv.mkDerivation (_finalAttrs: {
   pname = "arm-trusted-firmware-mt7988";
   version = "2024-01-17";
@@ -97,6 +107,9 @@ stdenv.mkDerivation (_finalAttrs: {
   patches = [ ./patches/0001-mtk-wdt-set-SWSYSRST_EN-before-SWRST.patch ];
 
   passthru = { inherit atfSource; };
+
+  # Same compiler major as the known-good OpenWrt preloader.
+  stdenv = overrideCC stdenv gcc13;
 
   nativeBuildInputs = [
     ubootTools # mkimage -T mtk_image (the BL2 boot-ROM header)
