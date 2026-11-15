@@ -1,8 +1,6 @@
 {
   lib,
   stdenv,
-  overrideCC,
-  gcc13,
   fetchFromGitHub,
   ubootTools,
   dtc,
@@ -107,9 +105,6 @@ stdenv.mkDerivation (_finalAttrs: {
   patches = [ ./patches/0001-mtk-wdt-set-SWSYSRST_EN-before-SWRST.patch ];
 
   passthru = { inherit atfSource; };
-
-  # Same compiler major as the known-good OpenWrt preloader.
-  stdenv = overrideCC stdenv gcc13;
 
   nativeBuildInputs = [
     ubootTools # mkimage -T mtk_image (the BL2 boot-ROM header)

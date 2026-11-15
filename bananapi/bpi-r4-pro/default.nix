@@ -90,8 +90,16 @@ in
 
     atfPackage = lib.mkOption {
       type = lib.types.package;
-      default = pkgsCross.callPackage ./atf.nix { };
-      defaultText = lib.literalMD "the board's pinned MT7988 ATF derivation";
+      # Built with GCC 13, the compiler major OpenWrt used for the known-good
+      # mt7988-sdmmc-comb preloader (toolchain/gcc/Config.version in 24.10).
+      #
+      # `overrideCC` does NOT work here: on a cross package set it re-uses the
+      # native compiler and silently returns the same store path as the GCC 15
+      # build.  `gcc13Stdenv` rebuilds the cross stdenv itself, which is what
+      # actually changes the aarch64 code generator (15.3.0 -> 13.4.0).
+      default =
+        pkgsCross.callPackage ./atf.nix { stdenv = pkgsCross.gcc13Stdenv; };
+      defaultText = lib.literalMD "the board's pinned MT7988 ATF derivation (GCC 13)";
       description = ''
         The ARM Trusted Firmware build (BL2 preloader + BL31 monitor).
       '';
