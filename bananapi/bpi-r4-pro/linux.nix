@@ -125,6 +125,16 @@ in
         structuredExtraConfig =
           (prev.structuredExtraConfig or { })
           // (with lib.kernel; {
+            # --- watchdog ---
+            # mtk_wdt is BUILTIN here (modules.builtin, no .ko), and its
+            # `nowayout` parameter defaults to WATCHDOG_NOWAYOUT, a build-time
+            # symbol -- /sys/module/mtk_wdt/parameters/ is empty, so neither a
+            # modprobe.d option NOR a kernel command line can set it.  Turn it
+            # on at compile time: without it systemd's "watchdog did not stop!"
+            # path leaves MT7988's TOPRGU with nothing kicking it and a warm
+            # reboot hangs until the board is power-cycled.
+            WATCHDOG_NOWAYOUT = yes;
+
             # --- board networking drivers (the delta provides the code) ---
             NET_MEDIATEK_SOC = module;
             NET_MEDIATEK_SOC_WED = yes;

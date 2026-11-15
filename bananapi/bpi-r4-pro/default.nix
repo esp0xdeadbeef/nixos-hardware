@@ -224,14 +224,16 @@ in
     # inside this mkIf block (verified: the definition never reaches the merge).
     # modprobe.d is therefore written through environment.etc instead, and the
     # systemd watchdog windows below keep kicking the timer through shutdown.
-    boot.kernelModules = [ "mtk_wdt" ];
-
-    # modprobe.d file, set with mkForce for the same reason as
-    # boot.extraModprobeConfig above: other modules assign environment.etc
-    # entries at normal priority and a plain attribute here can lose.
+    # mtk_wdt is BUILTIN here and exposes NO /sys/module parameters: its
+    # `nowayout` is set from the build-time symbol WATCHDOG_NOWAYOUT, so neither
+    # modprobe.d nor the kernel command line can reach it.  The switch is made
+    # in ./linux.nix (WATCHDOG_NOWAYOUT = yes).  Measured before that:
+    #
+    #   mtk-wdt 1001c000.watchdog: Watchdog enabled (timeout=31 sec, nowayout=0)
+    #
+    # ramoops, by contrast, IS a module, so its option belongs in modprobe.d.
     environment.etc."modprobe.d/bpi-r4-pro-watchdog.conf".text = lib.mkForce ''
       options ramoops console_size=0
-      options mtk_wdt nowayout=1
     '';
 
     systemd.settings.Manager = {
