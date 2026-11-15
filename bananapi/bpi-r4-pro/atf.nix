@@ -91,13 +91,10 @@ stdenv.mkDerivation (_finalAttrs: {
   #   HAVE_DRAM_OBJ_FILE=yes
   #   $(if $(DRAM_USE_COMB),DRAM_USE_COMB=1)           -> set for *-comb
   #
-  # BOARD_BGA and HAVE_DRAM_OBJ_FILE are passed UNCONDITIONALLY by OpenWrt;
-  # they are not optional extras.  Omitting them changes which DRAM object gets
-  # linked into BL2, which is the code path that runs between the BootROM and
-  # BL31 -- and BL2 is what hands off to the BL31 that services PSCI
-  # SYSTEM_RESET/SYSTEM_OFF.  Both a warm reboot and `shutdown now` hang on this
-  # board, and both are PSCI SMCs into BL31, so the preloader is the first place
-  # to make byte-comparable with a build that is known to work.
+  # MEASURED: adding these two flags leaves bl2.img BYTE-IDENTICAL to the build
+  # without them, so they are no-ops on mt7988 despite OpenWrt passing them
+  # unconditionally.  They are kept only so the flag list matches OpenWrt's
+  # verbatim; do not read them as a fix for anything.
   makeFlags = [
     "PLAT=mt7988"
     "BOOT_DEVICE=${bootDevice}"
