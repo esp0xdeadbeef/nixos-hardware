@@ -68,6 +68,18 @@ stdenv.mkDerivation (_finalAttrs: {
 
   src = atfSource;
 
+  # MT7988 ignores a WDT_SWRST write unless WDT_SWSYSRST_EN (0xfc) is set
+  # first.  This ATF's mtk_wdt_soft_reset() never sets it, so the write is
+  # dropped, the function returns, and the PSCI SYSTEM_RESET/SYSTEM_OFF
+  # handler in plat_pm.c parks the core in wfi() and panics -- the board then
+  # hangs and needs a power cycle.  That is exactly the symptom this board
+  # shows for BOTH `systemctl reboot` and `shutdown now`.
+  #
+  # The Linux driver already does the right thing for the same SoC
+  # (mt7988_data.has_swsysrst_en = true in drivers/watchdog/mtk_wdt.c).
+  # This patch makes BL31 match it.
+  patches = [ ./patches/0001-mtk-wdt-set-SWSYSRST_EN-before-SWRST.patch ];
+
   passthru = { inherit atfSource; };
 
   nativeBuildInputs = [

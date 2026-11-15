@@ -1,0 +1,43 @@
+--- a/plat/mediatek/apsoc_common/drivers/wdt/mtk_wdt.c
++++ b/plat/mediatek/apsoc_common/drivers/wdt/mtk_wdt.c
+@@ -15,6 +15,7 @@
+ #define WDT_RESTART			0x08
+ #define WDT_STA				0x0c
+ #define WDT_SWRST			0x14
++#define WDT_SWSYSRST			0x18
+ #define WDT_NONRST			0x20
+ #define WDT_NONRST2			0x24
+ 
+@@ -39,6 +40,10 @@
+ /* WDT_SWRST */
+ #define WDT_SWRST_KEY			0x1209
+ 
++/* WDT_SWSYSRST_EN -- MT7988 quirk, see mtk_wdt_soft_reset() */
++#define WDT_SWSYSRST_EN			0xfc
++#define WDT_SWSYSRST_SWRST		0x00000001
++
+ static const struct wdt_sta_reason_info {
+ 	uint32_t bit;
+ 	const char *reason;
+@@ -126,7 +131,21 @@
+ 	wdt_rmw(WDT_MODE, WDT_MODE_DUAL_MODE | WDT_MODE_IRQ, WDT_MODE_KEY);
+ 	wdt_rmw(WDT_MODE, 0, WDT_MODE_KEY | WDT_MODE_EXTEN);
+ 	wdt_rmw(WDT_RESTART, 0, WDT_RESTART_KEY);
++
++	/*
++	 * MT7988 only: the SoC ignores a WDT_SWRST write unless
++	 * WDT_SWSYSRST_EN (0xfc) is set first.  Without it the write is
++	 * dropped, mtk_wdt_soft_reset() returns, and the PSCI
++	 * SYSTEM_RESET/SYSTEM_OFF handler in plat_pm.c parks the core in
++	 * wfi() and panics -- the board hangs and needs a power cycle.
++	 * The Linux driver does the same thing via
++	 * mt7988_data.has_swsysrst_en = true.
++	 */
++	wdt_write(WDT_SWSYSRST_EN, WDT_SWSYSRST_SWRST);
++
+ 	wdt_rmw(WDT_SWRST, 0, WDT_SWRST_KEY);
++	/* Unreachable if the reset fired; keeps the intent explicit. */
++	wdt_write(WDT_SWSYSRST_EN, 0);
+ }
+ 
+ uint32_t mtk_wdt_read_nonrst(uint32_t index)
