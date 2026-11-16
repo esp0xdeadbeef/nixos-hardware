@@ -152,6 +152,23 @@ in
     # --- kernel build guard ---------------------------------------------
     # The headline cause of an unreachable board on this setup was kernel/module
     # DRIFT (the boot FIT carrying a different kernel than the generation's
+    # --- out-of-tree module building ------------------------------------
+    # Expose the kernel's `dev` output (headers + build scripts + generated
+    # config) so a module can be compiled in seconds instead of triggering a
+    # full kernel rebuild:
+    #
+    #   make -C $(nix build .#..kernel.dev --print-out-paths)/lib/modules/*/build \
+    #        M=$PWD modules && insmod ./foo.ko
+    #
+    # NixOS installs only `kernel-modules` (the .ko files), so without this
+    # /lib/modules/<ver>/build does not exist and every module experiment costs
+    # a full nixos-rebuild.
+    #
+    # The path is stable across generations that share a kernel, and insmod
+    # refuses a module built against a different version (version magic
+    # mismatch), so a stale dev output fails safe rather than crashing.
+    environment.etc."kernel-dev/source".source = config.boot.kernelPackages.kernel.dev;
+
     # `kernel-modules`; ./fit.nix keeps them in sync).  This guard is the
     # complementary check: it fails the build if the kernel's modules tree does
     # not carry the MT7988 ethernet + MT7530 DSA drivers at all.
