@@ -134,6 +134,17 @@ in
     # one file.  It carries the board fixes: internal switch port 0 only,
     # MxL86252 in MAINLINE port numbering (copper 1..4, CPU 9, SFP 13), firmware
     # 1.0.85.
+    # The board NEEDS a device tree, but does NOT need the kernel to build one:
+    # ./linux.nix turns the kernel's `buildDTBs` off explicitly (1570 DTBs for
+    # every SoC common-config enables, 118M, and none of them is this board --
+    # the bpi-r4-pro DTS only landed upstream in 6.19 while we run 6.18).
+    #
+    # Do not let `enable` fall back to its nixpkgs default, which is
+    # `config.boot.kernelPackages.kernel.buildDTBs`: that couples two unrelated
+    # questions ("does the kernel build DTBs?" vs "does this board need a DTB
+    # installed?").  Here the answers differ, so state the board's answer
+    # explicitly.  `dtbSource` is a plain dtc runCommand, independent of the
+    # kernel package.
     hardware.deviceTree = {
       enable = lib.mkDefault true;
       name = lib.mkDefault "mediatek/mt7988a-bananapi-bpi-r4-pro-4e-sd.dtb";

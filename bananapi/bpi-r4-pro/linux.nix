@@ -226,6 +226,30 @@ in
       })).overrideAttrs (prev: {
         buildFlags = builtins.filter (f: f != "dtbs") prev.buildFlags;
         installFlags = builtins.filter (f: f != "dtbs_install") prev.installFlags;
+
+        # State the policy, don't just delete the target.  nixpkgs' kernel
+        # derivation does NOT expose `buildDTBs` unless the caller passes it
+        # (`generic.nix` only `inherit`s it when non-null, and there the default
+        # is null), so on a normal kernel the attribute is simply MISSING.
+        # That matters because `hardware.deviceTree.enable` DEFAULTS to
+        # `config.boot.kernelPackages.kernel.buildDTBs`:
+        #
+        #   enable = lib.mkOption { default = config.boot.kernelPackages.kernel.buildDTBs; }
+        #
+        # so any board that leaves `hardware.deviceTree.enable` unset throws
+        # "attribute 'buildDTBs' missing" the moment the boot module reads it.
+        # Setting it here makes the attribute well-defined and false, i.e. "no,
+        # this kernel builds no DTBs", and the nixpkgs default then resolves to
+        # a clean `false` instead of an eval error.
+        #
+        # NOTE the polarity: this is the KERNEL's answer, not the board's.  The
+        # board still needs a device tree installed for the bootloader -- it
+        # just comes from `dtbSource` (dtc on ./dtb/*.dts), not the kernel
+        # tree -- so ./default.nix keeps `hardware.deviceTree.enable = true`.
+        # The two are independent; nixpkgs coupling them via this default is
+        # the bug, and it only looks correct on a stock aarch64 kernel because
+        # there buildDTBs happens to be true.
+        buildDTBs = false;
       })
     )
   );
