@@ -47,6 +47,7 @@ in
   imports = [
     ./linux.nix
     ./fip.nix
+    ./smc/reboot.nix
     ./efi.nix
   ];
 

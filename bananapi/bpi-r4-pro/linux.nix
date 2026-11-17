@@ -121,6 +121,18 @@ in
             name = "mtk-eth-warm-reset-poll-fix";
             patch = ./patches/982-mtk-eth-warm-reset-fix.patch;
           }
+          # Warm reboot hangs on this board.  arm64 machine_restart() calls
+          # efi_reboot() first, and U-Boot's EFI runtime advertises
+          # EFI_RT_SUPPORTED_RESET_SYSTEM, so efi.reset_system() is trusted to
+          # reset the SoC -- which it does not do reliably -- and the PSCI
+          # restart handler behind it is never reached.  Run the restart chain
+          # first and keep EFI as the fallback.  `efi=no_runtime` does not help:
+          # the kernel still remaps EFI services (dmesg: "Remapping and enabling
+          # EFI services").
+          {
+            name = "arm64-restart-before-efi";
+            patch = ./patches/983-arm64-restart-before-efi.patch;
+          }
         ];
         structuredExtraConfig =
           (prev.structuredExtraConfig or { })
