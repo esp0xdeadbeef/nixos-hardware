@@ -62,7 +62,13 @@ in
   # (an on-board rebuild) it is `pkgs` itself, so this is the same package.
   boot.kernelPackages = lib.mkDefault (
     kernelPkgs.linuxPackagesFor (
-      kernelPkgs.linux_6_18.override (prev: {
+      # NOTE the parentheses: `.overrideAttrs` must apply to the RESULT of
+      # `.override`, not to the lambda passed to it.  Without them Nix parses
+      # `override (prev: {...}).overrideAttrs (prev: {...})` as
+      # `override ((prev: {...}).overrideAttrs) (prev: {...})`, and
+      # linuxPackagesFor then receives a function ("expected a set but found a
+      # function").
+      (kernelPkgs.linux_6_18.override (prev: {
         # Pin the base kernel: linux_6_18 is mainline.nix and tracks 6.18.x
         # from kernels-org.json, so it drifts to a new point release whenever
         # nixpkgs moves.  mainline.nix applies argsOverride AFTER the
@@ -76,6 +82,16 @@ in
             hash = "sha256-9BBjgGGhZcEvQquHHS8/zVJVFTWbX67ugJac/4RSTfk=";
           };
         };
+        # Do NOT build the kernel tree's device trees.
+        #
+        # See the `overrideAttrs` below -- `override` cannot express this.  A
+        # `buildDTBs = false` ARG is silently dropped on the cross set
+        # (`pkgsCross.aarch64-multiplatform`), because `build.nix`'s default is
+        # resolved from the host platform and `generic.nix` only forwards the
+        # arg when it is non-null; the attribute never reappears on the
+        # resulting package (verified: `builtins.tryEval pkg.buildDTBs` ->
+        # missing).  Overriding the resolved `buildFlags`/`installFlags` lists
+        # instead works because those are final attributes.
         kernelPatches = (prev.kernelPatches or [ ]) ++ [
           {
             name = "openwrt-mt7988-net";
@@ -172,7 +188,44 @@ in
             DAMON_RECLAIM = lib.mkForce no;
             DAMON_LRU_SORT = lib.mkForce no;
             DAMON_STAT = lib.mkForce no;
+
+            # NOTE on pruning sound/DRM/media: `SND = lib.mkForce no` and
+            # friends do NOT work here, so don't "fix" them back in.  Those
+            # are tristate symbols not mentioned by common-config, and
+            # nixpkgs' builder runs generate-config.pl with AUTO_MODULES=true,
+            # which answers `m` for every tristate question whose prompt leads
+            # with m (generate-config.pl:94) -- overriding the resolved
+            # answer.  DAMON_RECLAIM above survives only because it is a bool.
+            # Pruning a tristate tree needs its bool gate to be off, or
+            # autoModules = false, which is a much larger change than it looks
+            # (it stops building virtually every module).
           });
+
+        # Drop the kernel tree's device trees from the build and install
+        # targets.  On aarch64 `build.nix` defaults `buildDTBs` to true, which
+        # puts `dtbs` in buildFlags and `dtbs_install` in installFlags; with
+        # CONFIG_ARCH_{QCOM,ROCKCHIP,TEGRA,EXYNOS,SUNXI,BCM,MESON,MVEBU,
+        # RENESAS,APPLE,HISI,STM32,...} all =y (they arrive from
+        # common-config) that is 1570 DTBs / ~118M in the kernel output, none
+        # of which this board can boot.
+        #
+        # The one DTB we need is the self-contained
+        # mt7988a-bananapi-bpi-r4-pro-4e-sd.dts, compiled directly with dtc in
+        # ./default.nix (`dtbSource`) -- see the rationale there.  Nothing in
+        # the board module reads the kernel's dtbs/ output; `dtbSource` is its
+        # own derivation.
+        #
+        # This has to be `overrideAttrs` and not a `buildDTBs = false` arg:
+        # on the cross set (`pkgsCross.aarch64-multiplatform`) that argument is
+        # silently dropped -- `generic.nix` forwards it only when non-null and
+        # `build.nix` re-derives its default from the host platform, so the
+        # attribute never reaches the resulting package (verified: it is
+        # absent from `pkg.buildDTBs` and `dtbs` was still in `buildFlags`).
+        # buildFlags/installFlags are final attributes, so filtering them here
+        # is what actually takes effect.
+      })).overrideAttrs (prev: {
+        buildFlags = builtins.filter (f: f != "dtbs") prev.buildFlags;
+        installFlags = builtins.filter (f: f != "dtbs_install") prev.installFlags;
       })
     )
   );
