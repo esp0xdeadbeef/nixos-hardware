@@ -16,7 +16,7 @@ board, built around the MediaTek MT7988A SoC (4× Cortex-A73, aarch64).
 | Network | 1× 1G RJ45 (internal switch port 0), 4× 2.5G RJ45 (MxL86252), 1× 10G SFP+ LAN, 1× 2.5G RJ45 / 10G SFP+ WAN combo |
 | Wi-Fi | MT7996 (optional, host AP) |
 | Storage | microSD (boot chain), optional NVMe (root) |
-| Firmware | vendor OpenWrt U-Boot (BL2 + ARM-TF FIP), no EFI |
+| Firmware | built from source: BL2 + ARM-TF FIP + U-Boot with `CONFIG_EFI_LOADER` |
 
 ## Why a patched kernel
 
@@ -38,17 +38,16 @@ compiles it with `dtc` instead of building it from the kernel source.
 ```nix
 {
   imports = [
+    # Pulls in ./efi.nix itself: systemd-boot on an ESP is the default.
     nixos-hardware.nixosModules.bananapi-bpi-r4-pro
-    # The board boots a raw FIT out of the `production` GPT partition; these two
-    # modules produce it and write the U-Boot env that carries the bootargs.
-    (nixos-hardware + "/bananapi/bpi-r4-pro/fit.nix")
+    # Writes the U-Boot env (`bootcmd=bootflow scan -lb` + fallback cmdline).
+    # The per-generation command line lives in systemd-boot's loader entries.
     (nixos-hardware + "/bananapi/bpi-r4-pro/uboot-env.nix")
   ];
 
   hardware.bananapi.bpi-r4-pro.enable = true;
-
-  # The board does not own its bootloader (vendor U-Boot loads the FIT), so keep
-  # NixOS off the ESP. The module already disables grub/systemd-boot.
+  # NixOS owns the bootloader: ./efi.nix installs systemd-boot (with
+  # --no-variables) and keeps 20 generations selectable on the serial console.
 }
 ```
 
@@ -57,16 +56,26 @@ The module exposes:
 - `hardware.bananapi.bpi-r4-pro.enable` — board support (this is the only
   mandatory switch).
 - `hardware.bananapi.bpi-r4-pro.extraKernelParams` — extra kernel parameters
-  appended to both the FIT bootargs and the U-Boot env.
+  appended to the board bootargs.
+- `hardware.bananapi.bpi-r4-pro.efiBoot` (default `true`) — boot via U-Boot's
+  EFI loader + systemd-boot on an ESP. Setting it `false` is only meaningful
+  with `buildFirmware = false`; see the assertion in `./efi.nix`.
+- `hardware.bananapi.bpi-r4-pro.buildFirmware` (default `true`) — build BL2 and
+  the FIP from source instead of using the signed vendor OpenWrt firmware.
+  Required by `efiBoot`: the vendor U-Boot has no `bootefi`, so an ESP would be
+  unbootable.
+- `hardware.bananapi.bpi-r4-pro.atfPackage` / `ubootPackage` — override the ATF
+  and U-Boot derivations.
 - `hardware.bananapi.bpi-r4-pro.kernelCheck` (default `true`) — build-time
   guard that fails if the kernel loses the MT7988 ethernet + DSA drivers.
-- `hardware.bananapi.bpi-r4-pro.fitSync` (default `true`) — reflash the
-  `production` FIT on every boot so `nixos-rebuild boot` stays consistent.
-- `hardware.bananapi.bpi-r4-pro.fitPartition` — the partition U-Boot reads the
-  FIT from (default `/dev/disk/by-partlabel/production`).
 
-Build artifacts: `config.system.build.bpiR4ProFit` (the FIT) and
-`config.system.build.bpiR4ProUbootEnv` (the redundant U-Boot env image).
+Build artifacts: `config.system.build.bpiR4ProBl2`,
+`config.system.build.bpiR4ProFip` and `config.system.build.bpiR4ProUbootEnv`.
+
+The module does **not** assemble the SD card or the root filesystem. That is
+host policy (partition sizes, which generations go on the ESP), so it lives
+outside the module — see the `mk-sd-image.sh` in the consuming repo for a
+worked example.
 
 ## Boot chain
 
@@ -75,41 +84,57 @@ microSD, so this layout is not a free choice:
 
 ```
 cold power-on
-  -> MTK BootROM -> BL2 (SD sector 34)
+  -> MTK BootROM -> BL2 (SD sector 34, raw — not a partition)
   -> BL2 reads the GPT and loads the ARM-TF FIP from the partition NAMED "fip"
      (if absent: "Partition 'fip' not found" -> "System halt!")
-  -> BL31 + BL33 / OpenWrt U-Boot
-  -> bootcmd = run boot_sdmmc
-     boot_sdmmc = run boot_production ; run boot_recovery
-     boot_production = ... && bootm $loadaddr#$bootconf#$bootconf_sd#$bootconf_extra
-     sdmmc_read_production: read the FIT raw from offset 0 of the `production`
-       partition
+  -> BL31 + BL33 / our U-Boot (CONFIG_EFI_LOADER)
+  -> bootcmd = run bootflow scan -lb   (U-Boot EFI boot manager)
+  -> EFI/BOOT/BOOTAA64.EFI on the ESP -> systemd-boot
+  -> loader/entries/nixos-generation-<N>.conf  (each carries its own init=)
   -> NixOS (console ttyS0)
 ```
 
-So the card must carry a GPT with `fip` (for BL2) and `production` (for
-U-Boot). `sd-image.nix` lays out the vendor geometry:
+So the card must carry a GPT with `fip` (for BL2) and `ESP` (for U-Boot). A
+representative geometry:
 
 | # | name | start (sector) | size (sectors) | note |
 | - | ---- | -------------- | -------------- | ---- |
-| 1 | bl2 | 34 | 8158 | BootROM/BL2 preloader |
-| 2 | ubootenv | 8192 | 1024 | U-Boot env (bootargs) |
+| 1 | bl2 | 34 | 8158 | BootROM/BL2 preloader (raw, outside the GPT) |
+| 2 | ubootenv | 8192 | 1024 | U-Boot env (`bootcmd` + fallback cmdline) |
 | 3 | factory | 9216 | 4096 | vendor calibration |
-| 4 | fip | 13312 | 8192 | ARM-TF FIP (BL2 loads by name) |
-| 5 | production | 327680 | 917504 | the raw NixOS FIT |
-| 6 | nixos-root | (aligned) | fills | root filesystem |
+| 4 | fip | 13312 | 8192 | ARM-TF FIP + U-Boot (BL2 loads by name) |
+| 5 | ESP | 102400 | 2097152 (1 GiB) | FAT32: `BOOTAA64.EFI` + kernel+initrd per generation |
+| 6 | root | after ESP | fills | root filesystem |
 
-`sd-image.nix` lays out the GPT, writes the U-Boot env into `ubootenv`, and
-writes the FIT into `production`. It expects the vendor **bl2/fip** blobs to be
-supplied from a stock OpenWrt SD image (this module does not ship the vendor
-firmware blobs): flash a stock OpenWrt card first, then write this image's
-`production` + `ubootenv` regions, or write the whole card from an image whose
-firmware regions you have filled.
+The ESP needs roughly 1 GiB, not 256 MiB: `systemd-boot.configurationLimit`
+keeps 20 generations and each carries its own kernel and initrd, so a small ESP
+fills on the second generation with `ENOSPC`.
+
+Because the firmware is built here rather than taken from a vendor image, a
+fresh card is self-sufficient — no "flash a stock OpenWrt card first" step.
+Signing is deliberately off: `TRUSTED_BOARD_BOOT` gates only verification of the
+FIP and retail boards ship with eFuses unblown, so BL2 loads an unsigned FIP.
+
+### Why EFI and not a FIT
+
+The board used to boot a raw FIT out of a `production` partition. A FIT carries
+its command line *inside* the image, and that cmdline contains an absolute
+`init=/nix/var/nix/profiles/system/init` — a pointer to whatever generation
+existed when the FIT was built. U-Boot overwrites `/chosen/bootargs` from its
+env, so the FIT had to be reflashed on every generation change. When it lagged,
+the board booted an old kernel against new `kernel-modules`, came up with no
+network, and needed the serial console to recover; flashing a trial generation
+pinned every reboot to the trial.
+
+An ESP removes that class of failure: `nixos-rebuild boot` writes a new loader
+entry, old ones stay selectable, and nothing is reflashed. The FIT path was
+functional, not broken — it was retired because it made bootloader state an
+image concern.
 
 ## `init=` and `root=`
 
 Two details are load-bearing on this board and are already handled by
-`fit.nix` / `uboot-env.nix`:
+`uboot-env.nix`:
 
 - `init=/nix/var/nix/profiles/system/init` is **mandatory** — NixOS's systemd
   initrd discovers the system closure only from `init=` on the kernel command
@@ -126,14 +151,31 @@ MT7988 net driver's clock/power blocks from being gated before it probes.
 
 ## Status
 
-Working (validated on the 4E board):
+Validated on the 4E board:
 
-- boot to NixOS over the vendor U-Boot FIT, serial console (`ttyS0`)
+- boot to NixOS through our own BL2 + FIP + U-Boot, serial console (`ttyS0`);
+  generations selectable from the systemd-boot menu on that console
 - internal-switch 1G jack, MxL86252 2.5G jacks, 10G SFP+ via the patched kernel
 - NVMe root (with `pci=pcie_bus_perf`)
+- warm reboot resets (watchdog `SWSYSRST_EN` before `SWRST`, `efi=no_runtime` so
+  PSCI owns reset/poweroff, plus the `dev_reboot`/`dev_smc` userspace tools)
+
+Not yet validated — do not assume these work:
+
+- **Poweroff.** Reset is proven; shutdown to a fully powered-off state is not.
+  Treat it as unproven rather than broken until tested.
+- **Wi-Fi AP planes.** Bridging the MT7996 VAPs onto the VLAN plane bridges has
+  been exercised only intermittently; a clients plane whose only members are
+  physical ports is not self-sufficient when those ports have no carrier.
 
 Known issues:
 
 - The `-iphy` overlay config is mapped to the resolved DTB; per-port 10G PHY
   tuning is out of scope here.
 - 10G SFP+ link behaviour depends on the module in the cage.
+- The shipped `dtb/mt7988a-bananapi-bpi-r4-pro-4e-sd.dts` is a resolved
+  (decompiled) DTS. Mainline now carries
+  `arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro-4e.dts` and its
+  `-r4-pro.dtsi`; they do not currently compile against the 6.18
+  `mt7988a.dtsi` (symbol drift, e.g. `ssusb0`), which is why the resolved DTS
+  exists. Revisit when the board kernel moves forward.
