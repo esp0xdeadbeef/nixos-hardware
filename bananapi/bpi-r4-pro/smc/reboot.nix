@@ -72,7 +72,7 @@ let
   '';
 
   buildIt =
-    pname: extra:
+    pname: tools: extra:
     pkgs.stdenvNoCC.mkDerivation ({
       inherit pname src;
       version = moduleVersion;
@@ -86,6 +86,14 @@ let
       buildPhase = ''
         runHook preBuild
         make -C ${kernel.dev}/lib/modules/${kernel.modDirVersion}/build M=$PWD ${pname}.ko
+        # The userspace tools are NOT kernel modules and the kbuild Makefile
+        # (obj-m only) never produces them.  Compile them here with the stdenv
+        # toolchain; without this the install below failed with
+        #   install: cannot stat 'rebootctl'
+        # which broke the whole s-nodus closure on the kernel-modules chain.
+        ${lib.concatMapStringsSep "\n" (t: ''
+          $CC -O2 -Wall -o ${t} ${t}.c
+        '') tools}
         runHook postBuild
       '';
 
@@ -99,12 +107,12 @@ let
     });
 
   # Restricted: no arguments, two verb choices.  Safe to install permanently.
-  devReboot = buildIt "dev_reboot" ''
+  devReboot = buildIt "dev_reboot" [ "rebootctl" ] ''
     install -Dm755 rebootctl $out/bin/rebootctl
   '';
 
   # Unrestricted: arbitrary SMC.  Diagnostic only, opt-in.
-  devSmc = buildIt "dev_smc" ''
+  devSmc = buildIt "dev_smc" [ "smcctl" ] ''
     install -Dm755 smcctl $out/bin/smcctl
   '';
 in
